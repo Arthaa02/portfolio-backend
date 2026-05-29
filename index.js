@@ -1,28 +1,44 @@
 require('dotenv').config();
+
 const express = require('express');
 const cors    = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-app.use(cors());
+
+// ── CORS: izinkan semua origin (penting untuk Vercel + file lokal) ──
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.options('*', cors()); // handle preflight request
+
 app.use(express.json());
 
-const supabaseUrl = process.env.SUPABASE_URL;
+// ── Supabase Client ────────────────────────────────────────
+let supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
+
+// Auto-fix URL jika terlanjur ditambah /rest/v1/ di Vercel env
+if (supabaseUrl && supabaseUrl.endsWith('/rest/v1/')) {
+    supabaseUrl = supabaseUrl.replace('/rest/v1/', '');
+} else if (supabaseUrl && supabaseUrl.endsWith('/rest/v1')) {
+    supabaseUrl = supabaseUrl.replace('/rest/v1', '');
+}
+
 const supabase    = (supabaseUrl && supabaseKey)
     ? createClient(supabaseUrl, supabaseKey)
     : null;
 
 if (!supabase) {
-    console.warn('[WARN] SUPABASE_URL / SUPABASE_KEY belum diisi di .env');
-    console.warn('[WARN] Pesan yang masuk hanya akan ditampilkan di console.');
+    console.warn('[WARN] SUPABASE_URL / SUPABASE_KEY belum diisi.');
 }
 
-// ── POST /api/contact ─────────────────────────────────────
+// ── POST /api/contact ──────────────────────────────────────
 app.post('/api/contact', async (req, res) => {
     const { name, email, message } = req.body;
 
-    // Validasi field wajib
     if (!name || !email || !message) {
         return res.status(400).json({
             success: false,
@@ -30,21 +46,15 @@ app.post('/api/contact', async (req, res) => {
         });
     }
 
-    console.log('\n[PESAN MASUK]');
-    console.log('  Nama   :', name);
-    console.log('  Email  :', email);
-    console.log('  Pesan  :', message);
+    console.log('[PESAN MASUK]', { name, email, message });
 
-    // Jika Supabase belum dikonfigurasi, tetap berhasil (mode dev)
     if (!supabase) {
-        console.log('[DEV MODE] Pesan diterima tapi tidak disimpan ke database.');
-        return res.status(200).json({
-            success: true,
-            message: 'Pesan berhasil dikirim! (Dev mode — konfigurasi Supabase untuk menyimpan ke database)'
+        return res.status(500).json({
+            success: false,
+            error: 'Database belum dikonfigurasi. Set SUPABASE_URL dan SUPABASE_KEY di Vercel Environment Variables.'
         });
     }
 
-    // Insert ke tabel "messages" di Supabase
     const { error } = await supabase
         .from('messages')
         .insert([{ name, email, message }]);
@@ -53,7 +63,7 @@ app.post('/api/contact', async (req, res) => {
         console.error('[ERROR] Supabase:', error.message);
         return res.status(500).json({
             success: false,
-            error: 'Gagal menyimpan pesan ke database.'
+            error: 'Gagal menyimpan pesan: ' + error.message
         });
     }
 
@@ -63,7 +73,7 @@ app.post('/api/contact', async (req, res) => {
     });
 });
 
-// ── Health check ───────────────────────────────────────────
+// ── GET /api/health ────────────────────────────────────────
 app.get('/api/health', (req, res) => {
     res.json({
         status: 'ok',
@@ -71,9 +81,14 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// ── Start Server ───────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`\n✅ Server berjalan di http://localhost:${PORT}`);
-    console.log(`   Supabase: ${supabase ? 'Terhubung' : 'Belum dikonfigurasi (dev mode)'}\n`);
-});
+// ── Start server (lokal only, Vercel pakai module.exports) ──
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+        console.log(`\n✅ Server berjalan di http://localhost:${PORT}`);
+        console.log(`   Supabase: ${supabase ? 'Terhubung' : 'Belum dikonfigurasi'}\n`);
+    });
+}
+
+// WAJIB untuk Vercel serverless
+module.exports = app;
